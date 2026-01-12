@@ -1,0 +1,42 @@
+// --- Pin Definitions ---
+const int vibrationPin = 2;   // Vibration sensor input
+const int buzzerPin = 8;      // Buzzer output
+const int yellowLedPin = 12;  // Yellow LED for normal
+const int redLedPin = 13;     // Red LED for alert
+
+void setup() {
+  pinMode(vibrationPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(yellowLedPin, OUTPUT);
+  pinMode(redLedPin, OUTPUT);
+
+  // Start system with yellow LED ON (normal)
+  digitalWrite(yellowLedPin, HIGH);
+  digitalWrite(redLedPin, LOW);
+  digitalWrite(buzzerPin, LOW);
+
+  Serial.begin(9600);
+  Serial.println("System Armed: Monitoring Vibration...");
+}
+
+void loop() {
+  int vibrationState = digitalRead(vibrationPin);
+
+  if (vibrationState == LOW) { // LOW = vibration detected
+    // Trigger alert
+    digitalWrite(redLedPin, HIGH);
+    digitalWrite(yellowLedPin, LOW);
+    digitalWrite(buzzerPin, HIGH);
+    Serial.println("ALERT! Vibration Detected!");
+
+    delay(2000); // Keep alert ON for 2 seconds
+
+    // Return to normal
+    digitalWrite(redLedPin, LOW);
+    digitalWrite(yellowLedPin, HIGH);
+    digitalWrite(buzzerPin, LOW);
+    Serial.println("System Normal");
+  }
+
+  delay(100); // small delay to stabilize reading
+}
