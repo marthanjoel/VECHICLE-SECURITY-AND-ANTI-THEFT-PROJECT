@@ -1,42 +1,82 @@
-// --- Pin Definitions ---
-const int vibrationPin = 2;   // Vibration sensor input
-const int buzzerPin = 8;      // Buzzer output
-const int yellowLedPin = 12;  // Yellow LED for normal
-const int redLedPin = 13;     // Red LED for alert
+// ==========================================
+// VEHICLE SECURITY & ANTI-THEFT SYSTEM
+// Arduino UNO R3 + Tilt Sensor
+// ==========================================
+
+const int tiltPin = 2;
+const int buzzerPin = 8;
+const int yellowLedPin = 12;
+const int redLedPin = 13;
+
+bool armed = true;
+bool alertActive = false;
+
+unsigned long lastTiltTime = 0;
+
+// Prevent repeated triggering from sensor movement
+const unsigned long debounceTime = 500;
 
 void setup() {
-  pinMode(vibrationPin, INPUT);
+  pinMode(tiltPin, INPUT);
   pinMode(buzzerPin, OUTPUT);
   pinMode(yellowLedPin, OUTPUT);
   pinMode(redLedPin, OUTPUT);
 
-  // Start system with yellow LED ON (normal)
+  Serial.begin(9600);
+
+  // Start system armed
+  armed = true;
+  alertActive = false;
+
   digitalWrite(yellowLedPin, HIGH);
   digitalWrite(redLedPin, LOW);
   digitalWrite(buzzerPin, LOW);
 
-  Serial.begin(9600);
-  Serial.println("System Armed: Monitoring Vibration...");
+  Serial.println("SECURITY:ARMED");
+  Serial.println("TILT:NORMAL");
+  Serial.println("ALARM:OFF");
 }
 
 void loop() {
-  int vibrationState = digitalRead(vibrationPin);
 
-  if (vibrationState == LOW) { // LOW = vibration detected
-    // Trigger alert
-    digitalWrite(redLedPin, HIGH);
-    digitalWrite(yellowLedPin, LOW);
-    digitalWrite(buzzerPin, HIGH);
-    Serial.println("ALERT! Vibration Detected!");
+  int tiltState = digitalRead(tiltPin);
 
-    delay(2000); // Keep alert ON for 2 seconds
+  // ==========================================
+  // TILT DETECTED
+  // ==========================================
 
-    // Return to normal
-    digitalWrite(redLedPin, LOW);
-    digitalWrite(yellowLedPin, HIGH);
-    digitalWrite(buzzerPin, LOW);
-    Serial.println("System Normal");
+  if (armed && tiltState == LOW) {
+
+    // Prevent repeated triggers
+    if (millis() - lastTiltTime > debounceTime) {
+
+      lastTiltTime = millis();
+
+      alertActive = true;
+
+      digitalWrite(yellowLedPin, LOW);
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(buzzerPin, HIGH);
+
+      Serial.println("SECURITY:ALERT");
+      Serial.println("TILT:DETECTED");
+      Serial.println("ALARM:ON");
+
+      // Keep alert active for 2 seconds
+      delay(2000);
+
+      // Return to normal
+      alertActive = false;
+
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(yellowLedPin, HIGH);
+      digitalWrite(buzzerPin, LOW);
+
+      Serial.println("SECURITY:ARMED");
+      Serial.println("TILT:NORMAL");
+      Serial.println("ALARM:OFF");
+    }
   }
 
-  delay(100); // small delay to stabilize reading
+  delay(50);
 }
