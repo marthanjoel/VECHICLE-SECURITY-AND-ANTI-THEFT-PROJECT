@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'services/arduino_serial_service.dart';
 
 void main() {
   runApp(const AntiSecurityApp());
@@ -12,14 +15,12 @@ class AntiSecurityApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'ANTI SECURITY APP',
-
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blue,
         ),
         useMaterial3: true,
       ),
-
       home: const SecurityHomePage(),
     );
   }
@@ -29,76 +30,262 @@ class SecurityHomePage extends StatefulWidget {
   const SecurityHomePage({super.key});
 
   @override
-  State<SecurityHomePage> createState() => _SecurityHomePageState();
+  State<SecurityHomePage> createState() =>
+      _SecurityHomePageState();
 }
 
 class _SecurityHomePageState extends State<SecurityHomePage> {
-  bool isArmed = false;
-  bool disturbanceDetected = false;
+  final ArduinoSerialService _arduino =
+      ArduinoSerialService.instance;
 
-  String get systemStatus {
-    if (!isArmed) {
-      return 'SYSTEM DISARMED';
+  StreamSubscription<String>? _subscription;
+
+  List<String> _ports = [];
+
+  String? _selectedPort;
+
+  bool _isConnected = false;
+  bool _isArmed = false;
+  bool _disturbanceDetected = false;
+  bool _alarmOn = false;
+
+  String _connectionStatus = 'NOT CONNECTED';
+
+  @override
+  void initState() {
+    super.initState();
+
+    _subscription = _arduino.dataStream.listen(
+      _handleArduinoMessage,
+    );
+
+    _scanPorts();
+  }
+
+  Future<void> _scanPorts() async {
+    try {
+      final ports = await _arduino.scanPorts();
+
+      if (!mounted) return;
+
+      setState(() {
+        _ports = ports;
+
+        if (_ports.isNotEmpty) {
+          _selectedPort = _ports.first;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _connectionStatus = 'PORT SCAN ERROR';
+      });
+    }
+  }
+
+  Future<void> _connectArduino() async {
+    if (_selectedPort == null) {
+      await _scanPorts();
+
+      if (_selectedPort == null) {
+        if (!mounted) return;
+
+        _showMessage(
+          'No Arduino serial port found.',
+        );
+
+        return;
+      }
     }
 
-    if (disturbanceDetected) {
+    setState(() {
+      _connectionStatus = 'CONNECTING...';
+    });
+
+    final success = await _arduino.connect(
+      _selectedPort!,
+      baudRate: 9600,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isConnected = success;
+      _connectionStatus =
+          success ? 'ARDUINO CONNECTED' : 'CONNECTION FAILED';
+    });
+  }
+
+  Future<void> _disconnectArduino() async {
+    await _arduino.disconnect();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isConnected = false;
+      _connectionStatus = 'NOT CONNECTED';
+      _isArmed = false;
+      _disturbanceDetected = false;
+      _alarmOn = false;
+    });
+  }
+
+  void _handleArduinoMessage(String message) {
+    if (!mounted) return;
+
+    if (message == 'ARDUINO_CONNECTED') {
+      setState(() {
+        _isConnected = true;
+        _connectionStatus = 'ARDUINO CONNECTED';
+      });
+
+      return;
+    }
+
+    if (message == 'ARDUINO_DISCONNECTED') {
+      setState(() {
+        _isConnected = false;
+        _connectionStatus = 'ARDUINO DISCONNECTED';
+      });
+
+      return;
+    }
+
+    if (message == 'SECURITY:ARMED') {
+      setState(() {
+        _isArmed = true;
+      });
+
+      return;
+    }
+
+    if (message == 'SECURITY:ALERT') {
+      setState(() {
+        _isArmed = true;
+        _disturbanceDetected = true;
+      });
+
+      return;
+    }
+
+    if (message == 'TILT:NORMAL') {
+      setState(() {
+        _disturbanceDetected = false;
+      });
+
+      return;
+    }
+
+    if (message == 'TILT:DETECTED') {
+      setState(() {
+        _disturbanceDetected = true;
+      });
+
+      return;
+    }
+
+    if (message == 'ALARM:ON') {
+      setState(() {
+        _alarmOn = true;
+      });
+
+      return;
+    }
+
+    if (message == 'ALARM:OFF') {
+      setState(() {
+        _alarmOn = false;
+      });
+
+      return;
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+      ),
+    );
+  }
+
+  Color get statusColor {
+    if (!_isConnected) {
+      return Colors.grey;
+    }
+
+    if (_disturbanceDetected || _alarmOn) {
+      return Colors.red;
+    }
+
+    if (_isArmed) {
+      return Colors.green;
+    }
+
+    return Colors.grey;
+  }
+
+  IconData get statusIcon {
+    if (!_isConnected) {
+      return Icons.usb_off;
+    }
+
+    if (_disturbanceDetected || _alarmOn) {
+      return Icons.warning_amber_rounded;
+    }
+
+    if (_isArmed) {
+      return Icons.security;
+    }
+
+    return Icons.lock_open;
+  }
+
+  String get systemStatus {
+    if (!_isConnected) {
+      return 'ARDUINO NOT CONNECTED';
+    }
+
+    if (_disturbanceDetected || _alarmOn) {
       return 'SECURITY ALERT!';
     }
 
-    return 'SYSTEM ARMED';
+    if (_isArmed) {
+      return 'SYSTEM ARMED';
+    }
+
+    return 'SYSTEM DISARMED';
   }
 
   String get disturbanceStatus {
-    if (disturbanceDetected) {
-      return 'DISTURBANCE DETECTED!';
+    if (_disturbanceDetected) {
+      return 'TILT DETECTED!';
     }
 
     return 'NO DISTURBANCE';
   }
 
   String get alertMessage {
-    if (!isArmed) {
-      return 'SECURITY SYSTEM IS OFF';
+    if (_alarmOn) {
+      return 'ALARM ACTIVE';
     }
 
-    if (disturbanceDetected) {
+    if (_disturbanceDetected) {
       return 'VEHICLE DISTURBANCE DETECTED!';
     }
 
-    return 'VEHICLE IS SECURE';
+    if (_isArmed) {
+      return 'VEHICLE IS SECURE';
+    }
+
+    return 'SECURITY SYSTEM IS OFF';
   }
 
-  Color get statusColor {
-    if (!isArmed) {
-      return Colors.grey;
-    }
-
-    if (disturbanceDetected) {
-      return Colors.red;
-    }
-
-    return Colors.green;
-  }
-
-  IconData get statusIcon {
-    if (!isArmed) {
-      return Icons.lock_open;
-    }
-
-    if (disturbanceDetected) {
-      return Icons.warning_amber_rounded;
-    }
-
-    return Icons.security;
-  }
-
-  void toggleSecurity() {
-    setState(() {
-      isArmed = !isArmed;
-
-      // Clear any previous alert when changing security state.
-      disturbanceDetected = false;
-    });
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -126,7 +313,6 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
             children: [
               const SizedBox(height: 10),
 
-              // VEHICLE ICON
               Icon(
                 Icons.directions_car,
                 size: 90,
@@ -144,17 +330,99 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
                 ),
               ),
 
+              const SizedBox(height: 20),
+
+              // CONNECTION CARD
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _isConnected
+                              ? Icons.usb
+                              : Icons.usb_off,
+                          color: _isConnected
+                              ? Colors.green
+                              : Colors.grey,
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        Expanded(
+                          child: Text(
+                            _connectionStatus,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    DropdownButtonFormField<String>(
+                      value: _selectedPort,
+                      decoration: const InputDecoration(
+                        labelText: 'Arduino Port',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _ports.map(
+                        (port) {
+                          return DropdownMenuItem<String>(
+                            value: port,
+                            child: Text(port),
+                          );
+                        },
+                      ).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPort = value;
+                        });
+                      },
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        onPressed: _isConnected
+                            ? _disconnectArduino
+                            : _connectArduino,
+                        icon: Icon(
+                          _isConnected
+                              ? Icons.link_off
+                              : Icons.link,
+                        ),
+                        label: Text(
+                          _isConnected
+                              ? 'DISCONNECT ARDUINO'
+                              : 'CONNECT ARDUINO',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
               const SizedBox(height: 25),
 
-              // SECURITY INFORMATION CARD
+              // SECURITY CARD
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
-
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
-
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.10),
@@ -163,7 +431,6 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
                     ),
                   ],
                 ),
-
                 child: Column(
                   children: [
                     const Text(
@@ -176,16 +443,13 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
 
                     const SizedBox(height: 20),
 
-                    // STATUS ICON
                     Container(
                       width: 80,
                       height: 80,
-
                       decoration: BoxDecoration(
                         color: statusColor.withOpacity(0.12),
                         shape: BoxShape.circle,
                       ),
-
                       child: Icon(
                         statusIcon,
                         size: 45,
@@ -195,11 +459,9 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
 
                     const SizedBox(height: 15),
 
-                    // SYSTEM STATUS
                     Text(
                       systemStatus,
                       textAlign: TextAlign.center,
-
                       style: TextStyle(
                         fontSize: 23,
                         fontWeight: FontWeight.bold,
@@ -209,19 +471,17 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
 
                     const Divider(height: 35),
 
-                    // DISTURBANCE STATUS
                     SecurityInfoRow(
                       icon: Icons.warning_amber_rounded,
                       title: 'Disturbance',
                       value: disturbanceStatus,
-                      color: disturbanceDetected
+                      color: _disturbanceDetected
                           ? Colors.red
                           : Colors.green,
                     ),
 
                     const SizedBox(height: 18),
 
-                    // ALERT STATUS
                     SecurityInfoRow(
                       icon: Icons.notifications_active,
                       title: 'Alert',
@@ -231,70 +491,49 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
 
                     const SizedBox(height: 18),
 
-                    // PROTECTION STATUS
                     SecurityInfoRow(
                       icon: Icons.shield,
                       title: 'Protection',
-                      value: isArmed
+                      value: _isArmed
                           ? 'ACTIVE'
                           : 'INACTIVE',
-                      color: isArmed
+                      color: _isArmed
                           ? Colors.green
                           : Colors.grey,
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    SecurityInfoRow(
+                      icon: Icons.volume_up,
+                      title: 'Alarm',
+                      value: _alarmOn
+                          ? 'ON'
+                          : 'OFF',
+                      color: _alarmOn
+                          ? Colors.red
+                          : Colors.green,
                     ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 30),
+              const SizedBox(height: 25),
 
-              // ARMED / DISARMED TOGGLE BUTTON
-              SizedBox(
-                width: double.infinity,
-                height: 60,
-
-                child: ElevatedButton.icon(
-                  onPressed: toggleSecurity,
-
-                  icon: Icon(
-                    isArmed
-                        ? Icons.lock
-                        : Icons.lock_open,
-                    size: 27,
-                  ),
-
-                  label: Text(
-                    isArmed
-                        ? 'ARMED'
-                        : 'DISARMED',
-
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isArmed
-                        ? Colors.green
-                        : Colors.grey.shade700,
-
-                    foregroundColor: Colors.white,
-
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
+              Text(
+                'The Arduino is the source of the real sensor status.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: 13,
                 ),
               ),
 
-              const SizedBox(height: 25),
+              const SizedBox(height: 15),
 
-              // FOOTER
               Text(
                 'Vehicle Security & Anti-Theft Protection',
                 textAlign: TextAlign.center,
-
                 style: TextStyle(
                   color: Colors.grey.shade600,
                   fontSize: 14,
@@ -308,8 +547,6 @@ class _SecurityHomePageState extends State<SecurityHomePage> {
   }
 }
 
-
-// SECURITY INFORMATION ROW
 class SecurityInfoRow extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -350,7 +587,6 @@ class SecurityInfoRow extends StatelessWidget {
           child: Text(
             value,
             textAlign: TextAlign.right,
-
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
